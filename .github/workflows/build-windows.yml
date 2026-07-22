@@ -67,3 +67,10 @@ jobs:
           name: LAN-Bridge-Windows-portable-exe
           path: src-tauri/target/release/lan-bridge-windows.exe
           if-no-files-found: warn
+
+      - name: Upload lan-gateway.exe（单独，兜底手动替换用）
+        uses: actions/upload-artifact@v4
+        with:
+          name: lan-gateway-exe
+          path: lan-gateway.exe
+          if-no-files-found: warn
