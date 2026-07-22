@@ -203,7 +203,11 @@ def acquire_session() -> http.cookiejar.CookieJar:
     nonce = q.get("nonce", [None])[0]
     if not nonce:
         raise RuntimeError("nonce 链接里没有 nonce 参数")
-    # 2. GET /?nonce -> operon_csrf cookie（Windows host 访问 WSL 的 899x）
+    # nonce_url 通常是 localhost:port（claude-science url 输出）。统一改成 127.0.0.1:APP_PORT，
+    # 保证 GET 拿 cookie 与 POST 用同一 host → cookie 同 domain → POST 能带上 operon_csrf；
+    # 否则 GET 在 localhost 拿的 cookie，POST 到 127.0.0.1 不带 → Science 判 CSRF 失败 → 401。
+    nonce_url = parsed._replace(netloc=f"127.0.0.1:{APP_PORT}").geturl()
+    # 2. GET /?nonce -> operon_csrf cookie（Windows host 经 WSL forwarding 访问 8000/8001）
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     opener.open(nonce_url, timeout=CONNECT_TIMEOUT).read()
@@ -213,7 +217,12 @@ def acquire_session() -> http.cookiejar.CookieJar:
         f"http://127.0.0.1:{APP_PORT}/api/auth/nonce", data=data, method="POST",
     )
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    opener.open(req, timeout=CONNECT_TIMEOUT).read()
+    try:
+        opener.open(req, timeout=CONNECT_TIMEOUT).read()
+    except urllib.error.HTTPError as e:
+        body = e.read()[:300].decode("utf-8", "replace")
+        log(f"POST /api/auth/nonce 失败：HTTP {e.code}；已带 cookie={[c.name for c in jar]}；响应={body}")
+        raise
     return jar
 
 
