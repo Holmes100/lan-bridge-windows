@@ -1,0 +1,64 @@
+name: build-windows
+
+# 推到 main/master 自动编译；也可在 Actions 页面手动触发（workflow_dispatch）。
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: win-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
+          restore-keys: win-cargo-
+
+      - name: Install JS deps
+        run: npm install
+
+      - name: Build Python sidecar (lan-gateway.exe)
+        shell: cmd
+        run: .\build-python.bat
+
+      - name: Build Tauri bundles (msi + nsis)
+        run: npm run tauri build
+
+      - name: Upload msi installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAN-Bridge-Windows-msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Upload nsis installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAN-Bridge-Windows-nsis
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
+
+      - name: Upload portable exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: LAN-Bridge-Windows-portable-exe
+          path: src-tauri/target/release/lan-bridge-windows.exe
+          if-no-files-found: warn

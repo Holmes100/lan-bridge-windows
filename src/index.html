@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LAN Bridge</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="panel">
+    <header class="top">
+      <div class="brand">
+        <span id="dot" class="dot gray"></span>
+        <h1>LAN Bridge</h1>
+      </div>
+      <span id="stateText" class="muted">读取中…</span>
+    </header>
+
+    <section class="hero">
+      <button id="toggleBtn" class="primary" disabled>启动转发</button>
+      <div class="url-row">
+        <input id="lanUrl" class="url" readonly placeholder="https://<本机IP>:1450/" />
+        <button id="copyBtn" class="ghost">复制</button>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="cell"><div class="k">运行</div><div id="vRunning" class="v">—</div></div>
+      <div class="cell"><div class="k">监听 1450</div><div id="vListen" class="v">—</div></div>
+      <div class="cell"><div class="k">已代登录</div><div id="vSession" class="v">—</div></div>
+      <div class="cell"><div class="k">内容端口 1451</div><div id="vContent" class="v">—</div></div>
+    </section>
+
+    <details class="settings">
+      <summary>设置</summary>
+      <div class="form">
+        <label>Science 应用端口<input id="appPort" type="number" value="8990"></label>
+        <label>Science 内容端口<input id="contentPort" type="number" value="8991"></label>
+        <label>LAN 应用端口<input id="lanPort" type="number" value="1450"></label>
+        <label>LAN 内容端口<input id="lanContentPort" type="number" value="1451"></label>
+        <label class="wide">WSL 发行版名（空=默认）<input id="wslDistro" type="text" placeholder="如 Ubuntu"></label>
+        <label class="wide">沙箱 HOME（WSL 内 Linux 路径）<input id="sandboxHome" type="text" placeholder="如 /home/you/.csswitch/sandbox/home"></label>
+        <label class="wide">claude-science 路径（WSL 内）<input id="scienceBin" type="text" placeholder="如 ~/.local/bin/claude-science"></label>
+        <label class="wide">访问 token（空=不鉴权）<input id="token" type="text" placeholder="留空则局域网开放"></label>
+        <label class="check"><input id="autostart" type="checkbox"> 启动 app 时自动开启转发</label>
+        <div class="actions"><button id="saveBtn" class="primary small">保存设置</button><span id="saveMsg" class="muted"></span></div>
+        <p class="hint">注意：Science 跑在 WSL 里；<b>沙箱 HOME / claude-science 路径填 WSL 内的 Linux 路径</b>。改端口需重启转发才生效。</p>
+      </div>
+    </details>
+
+    <section class="logwrap">
+      <div class="loghead"><span>实时日志</span><button id="clearLog" class="ghost tiny">清空</button></div>
+      <pre id="log"></pre>
+    </section>
+  </main>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

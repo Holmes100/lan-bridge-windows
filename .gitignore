@@ -1,0 +1,12 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.log
+lan-gateway.exe
+lan-bridge-windows.zip
+.DS_Store

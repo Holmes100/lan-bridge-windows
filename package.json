@@ -1,0 +1,12 @@
+{
+  "name": "lan-bridge-windows",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LAN Bridge (Windows) — 把 WSL2 里的 Claude Science 转发到局域网的轻量 GUI",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
