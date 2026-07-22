@@ -32,6 +32,11 @@ jobs:
           key: win-cargo-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml') }}
           restore-keys: win-cargo-
 
+      - name: Bump version with run number（版本号带上 CI run 号，确保新版能覆盖旧版）
+        shell: bash
+        run: |
+          python -c "import json;f='src-tauri/tauri.conf.json';d=json.load(open(f));d['version']='0.1.0.'+str($GITHUB_RUN_NUMBER);json.dump(d,open(f,'w'),indent=2,ensure_ascii=False);print('version ->',d['version'])"
+
       - name: Install JS deps
         run: npm install
 
