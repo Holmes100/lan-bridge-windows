@@ -64,6 +64,13 @@ pub fn gateway_start(app: AppHandle, state: State<'_, AppState>) -> Result<Value
         cmd.env("CS_GUARD_TOKEN", &cfg.token);
     }
 
+    // Windows：CREATE_NO_WINDOW，不弹控制台黑框（PyInstaller exe 默认带控制台窗口）
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+
     let child = cmd.spawn().map_err(|e| format!("启动 lan-gateway 失败：{e}"))?;
     *state.child.lock().unwrap() = Some(child);
     Ok(json!({ "lan_url": lan_url_with(&cfg) }))
@@ -73,6 +80,19 @@ pub fn gateway_start(app: AppHandle, state: State<'_, AppState>) -> Result<Value
 pub fn gateway_stop(state: State<'_, AppState>) -> Result<(), String> {
     let mut guard = state.child.lock().unwrap();
     if let Some(child) = guard.as_mut() {
+        // Windows：PyInstaller onefile 是 bootloader + python 子进程，taskkill /T 杀整棵树，
+        // 避免只 kill 主进程后 python 子进程残留（下次启动又弹新黑框）。
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/T", "/PID", &child.id().to_string()])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(0x0800_0000)
+                .status();
+        }
         let _ = child.kill();
         let _ = child.wait();
     }
