@@ -134,12 +134,22 @@ pub fn get_lan_url() -> Value {
 
 // ---------- helpers ----------
 
-/// 打包后的 lan-gateway.exe 路径（resource_dir/scripts/lan-gateway.exe）。
+/// 打包后的 lan-gateway.exe 路径。
+/// 优先 resource_dir/scripts/；某些 nsis 安装下 resource_dir() 不指向安装目录，
+/// 再用「本体 exe 同目录 / scripts/」兜底（lan-gateway.exe 和本体在同一安装目录的 scripts/ 下）。
 fn exe_path(app: &AppHandle) -> Option<String> {
     if let Ok(res) = app.path().resource_dir() {
-        let p = res.join("scripts/lan-gateway.exe");
+        let p = res.join("scripts").join("lan-gateway.exe");
         if p.is_file() {
             return Some(p.to_string_lossy().to_string());
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("scripts").join("lan-gateway.exe");
+            if p.is_file() {
+                return Some(p.to_string_lossy().to_string());
+            }
         }
     }
     None
