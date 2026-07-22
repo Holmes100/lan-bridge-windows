@@ -183,8 +183,12 @@ def acquire_session() -> http.cookiejar.CookieJar:
         log("⚠️ CS_WSL_DISTRO 未设置，使用 wsl.exe 默认发行版")
     # 1. claude-science url 拿 nonce 链接（在 WSL 里，HOME 设为沙箱 home）
     linux_cmd = f"HOME={shlex.quote(SANDBOX_HOME)} {shlex.quote(SCIENCE_BIN)} url"
+    # Windows 中文系统默认用 GBK 解码，但 wsl.exe 透传的是 Linux 的 UTF-8 输出
+    # （claude-science url 的框线字符/中文），GBK 解不了会抛 UnicodeDecodeError 让代登录崩。
+    # 强制 UTF-8 + errors=replace，绝不在解码上挂掉。
     proc = subprocess.run(
-        _wsl_argv(linux_cmd), capture_output=True, text=True, timeout=30,
+        _wsl_argv(linux_cmd), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=30,
     )
     nonce_url = None
     for line in (proc.stdout or "").splitlines():
