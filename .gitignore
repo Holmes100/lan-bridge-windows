@@ -10,3 +10,5 @@ build/
 lan-gateway.exe
 lan-bridge-windows.zip
 .DS_Store
+
+*.bak-rewrite

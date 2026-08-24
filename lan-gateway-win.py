@@ -410,7 +410,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             elif kl == "content-encoding" and v.strip():
                 encoded = True
         host = self.headers.get("Host", "").split(":")[0] or "localhost"
-        if not encoded and any(t in ctype for t in ("text/html", "javascript", "text/css", "json", "xml")):
+        if not encoded and (ctype.startswith("text/") or "javascript" in ctype or ctype == "application/json"):
             try:
                 body = self._rewrite_body(body, host)
             except Exception:
