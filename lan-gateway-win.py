@@ -151,11 +151,13 @@ def _redirect_stdio_to_log() -> None:
 
 def acquire_session() -> http.cookiejar.CookieJar:
     """跑一遍 nonce 流程，返回含 Science 会话 cookie 的 CookieJar。"""
-    env = dict(os.environ)  # Windows 原生 CS：CLI 自用其数据目录，无需 HOME/SANDBOX_HOME
+    # Windows 原生 CS：CLI 自用其数据目录，无需 HOME/SANDBOX_HOME。
+    # 不重建环境块（env=dict(os.environ)）：GUI(Tauri) 环境下重建会触发
+    # CreateProcess WinError 87「参数错误」，直接继承父进程环境即可。
     # 1. claude-science url 拿 nonce 链接
     proc = subprocess.run(
         [SCIENCE_BIN, "url"], capture_output=True,
-        env=env, timeout=15, encoding="utf-8", errors="replace",
+        timeout=15, encoding="utf-8", errors="replace",
     )
     nonce_url = None
     for line in (proc.stdout or "").splitlines():
