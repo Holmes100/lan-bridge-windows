@@ -152,12 +152,28 @@ def _redirect_stdio_to_log() -> None:
 def acquire_session() -> http.cookiejar.CookieJar:
     """跑一遍 nonce 流程，返回含 Science 会话 cookie 的 CookieJar。"""
     # Windows 原生 CS：CLI 自用其数据目录，无需 HOME/SANDBOX_HOME。
-    # 不重建环境块（env=dict(os.environ)）：GUI(Tauri) 环境下重建会触发
-    # CreateProcess WinError 87「参数错误」，直接继承父进程环境即可。
+    # GUI(Tauri) 父进程的环境块在 CreateProcess 时报 WinError 87「参数错误」，
+    # 无论继承还是重建都会中招 → 用白名单最小环境块兜底。
+    cli_env = {
+        "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
+        "SYSTEMDRIVE": os.environ.get("SYSTEMDRIVE", "C:"),
+        "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"),
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+        "TEMP": os.environ.get("TEMP", r"C:\Windows\Temp"),
+        "TMP": os.environ.get("TMP", r"C:\Windows\Temp"),
+        "USERPROFILE": os.environ.get("USERPROFILE", os.path.expanduser("~")),
+        "HOMEDRIVE": os.environ.get("HOMEDRIVE", "C:"),
+        "HOMEPATH": os.environ.get("HOMEPATH", r"\Users\shanbin"),
+        "APPDATA": os.environ.get("APPDATA", ""),
+        "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
+        "PROGRAMDATA": os.environ.get("PROGRAMDATA", ""),
+        "PATH": os.environ.get("PATH", r"C:\Windows\system32;C:\Windows"),
+    }
+    cli_env = {k: v for k, v in cli_env.items() if v}
     # 1. claude-science url 拿 nonce 链接
     proc = subprocess.run(
         [SCIENCE_BIN, "url"], capture_output=True,
-        timeout=15, encoding="utf-8", errors="replace",
+        env=cli_env, timeout=15, encoding="utf-8", errors="replace",
     )
     nonce_url = None
     for line in (proc.stdout or "").splitlines():
