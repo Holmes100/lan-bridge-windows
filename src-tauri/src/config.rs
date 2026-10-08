@@ -40,8 +40,8 @@ impl Default for Config {
         Self {
             sandbox_home: String::new(),
             // Windows 原生 Claude Science 默认端口
-            app_port: 8000,
-            content_port: 8001,
+            app_port: 8990,
+            content_port: 8991,
             lan_port: 1450,
             lan_content_port: 1451,
             science_bin: String::new(),

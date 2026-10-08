@@ -36,8 +36,8 @@ import secrets
 
 # ---- 配置（环境变量）----
 SANDBOX_HOME = os.environ.get("CS_SANDBOX_HOME", "")
-APP_PORT = int(os.environ.get("CS_APP_PORT", "8000"))
-CONTENT_PORT = int(os.environ.get("CS_CONTENT_PORT", "8001"))
+APP_PORT = int(os.environ.get("CS_APP_PORT", "8990"))
+CONTENT_PORT = int(os.environ.get("CS_CONTENT_PORT", "8991"))
 LAN_PORT = int(os.environ.get("CS_LAN_PORT", "1450"))
 LAN_CONTENT_PORT = int(os.environ.get("CS_LAN_CONTENT_PORT", "1451"))
 GUARD_TOKEN = os.environ.get("CS_GUARD_TOKEN", "")
