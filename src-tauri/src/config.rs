@@ -12,7 +12,7 @@ pub struct Config {
     pub lan_port: u16,
     pub lan_content_port: u16,
     pub science_bin: String,
-    /// WSL 发行版名（空 = wsl.exe 默认发行版）。claude-science 跑在 WSL 里，代登录要跨界进去。
+    /// 已废弃（原生模式不再使用）；保留字段以兼容旧 config.json，序列化时写空。
     #[serde(default = "default_wsl_distro")]
     pub wsl_distro: String,
     /// 空 = 不鉴权（默认）。非空 = 访问需带 ?token= / Bearer / cs_lan cookie。
@@ -22,7 +22,7 @@ pub struct Config {
 }
 
 fn default_wsl_distro() -> String {
-    "Ubuntu".to_string()
+    String::new()
 }
 
 fn home_dir() -> String {
@@ -38,13 +38,13 @@ fn home_dir() -> String {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            // WSL 内的 Linux 路径（用户必填）。空会让代登录报错并提示。
             sandbox_home: String::new(),
-            app_port: 8990,
-            content_port: 8991,
+            // Windows 原生 Claude Science 默认端口
+            app_port: 8000,
+            content_port: 8001,
             lan_port: 1450,
             lan_content_port: 1451,
-            science_bin: "~/.local/bin/claude-science".to_string(),
+            science_bin: String::new(),
             wsl_distro: default_wsl_distro(),
             token: String::new(),
             autostart: false,

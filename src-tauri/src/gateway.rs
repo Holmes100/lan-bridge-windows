@@ -51,13 +51,11 @@ pub fn gateway_start(app: AppHandle, state: State<'_, AppState>) -> Result<Value
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .env("CS_SANDBOX_HOME", &cfg.sandbox_home)
         .env("CS_APP_PORT", cfg.app_port.to_string())
         .env("CS_CONTENT_PORT", cfg.content_port.to_string())
         .env("CS_LAN_PORT", cfg.lan_port.to_string())
         .env("CS_LAN_CONTENT_PORT", cfg.lan_content_port.to_string())
         .env("CS_SCIENCE_BIN", &cfg.science_bin)
-        .env("CS_WSL_DISTRO", &cfg.wsl_distro)
         .env("CS_LAN_LOG", &log_path);
     // token 空 = 不鉴权（默认内网可信）；非空才开 guard
     if !cfg.token.is_empty() {

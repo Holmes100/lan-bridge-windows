@@ -39,8 +39,6 @@ function fillConfig(c) {
   els.contentPort.value = c.content_port;
   els.lanPort.value = c.lan_port;
   els.lanContentPort.value = c.lan_content_port;
-  els.wslDistro.value = c.wsl_distro || "";
-  els.sandboxHome.value = c.sandbox_home;
   els.scienceBin.value = c.science_bin;
   els.token.value = c.token;
   els.autostart.checked = !!c.autostart;
@@ -56,7 +54,7 @@ function appendLog(line) {
 
 window.addEventListener("DOMContentLoaded", async () => {
   for (const k of ["dot","stateText","toggleBtn","lanUrl","copyBtn","vRunning","vListen","vSession","vContent",
-    "appPort","contentPort","lanPort","lanContentPort","wslDistro","sandboxHome","scienceBin","token","autostart",
+    "appPort","contentPort","lanPort","lanContentPort","scienceBin","token","autostart",
     "saveBtn","saveMsg","log","clearLog"]) { els[k] = $(k); }
 
   // 先挂日志监听，再拉配置/状态，避免漏掉启动日志
@@ -85,8 +83,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     const c = {
       app_port: +els.appPort.value, content_port: +els.contentPort.value,
       lan_port: +els.lanPort.value, lan_content_port: +els.lanContentPort.value,
-      wsl_distro: els.wslDistro.value.trim(),
-      sandbox_home: els.sandboxHome.value.trim(), science_bin: els.scienceBin.value.trim(),
+      sandbox_home: "", science_bin: els.scienceBin.value.trim(),
       token: els.token.value, autostart: els.autostart.checked,
     };
     try { await invoke("set_config", { cfg: c }); els.saveMsg.textContent = "已保存 ✓"; setTimeout(() => els.saveMsg.textContent = "", 1500); }

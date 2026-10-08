@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
 """
-LAN Bridge (Windows) —— 把 WSL2 里的 Claude Science 经自签 HTTPS + WebSocket
-转发给局域网。本脚本跑在 Windows host 上(Python 或 PyInstaller 打的 exe)。
+LAN Gateway (Windows 原生版) — 让局域网内其它机器免登录访问本机 Windows 原生 Claude Science。
 
-监听两个 LAN 端口，反代到 Science（实际在 WSL2，经 WSL localhost-forwarding 可达）：
-    0.0.0.0:{CS_LAN_PORT}(默认1450)  ->  127.0.0.1:{CS_APP_PORT}(默认8990, Science app)
-    0.0.0.0:{CS_LAN_CONTENT_PORT}(默认1451) -> 127.0.0.1:{CS_CONTENT_PORT}(默认8991, sandbox content)
+由 Linux 版 lan-gateway.py 移植：直连本机原生 Science（默认 127.0.0.1:8000/8001），不经 WSL。
 
-自动代登录：启动/上游 401 时，通过 wsl.exe 在 WSL 里跑 `claude-science url`
-（沙箱 HOME）拿 nonce，再在 Windows host 这边 GET /?nonce + POST /api/auth/nonce
-取得会话 cookie，注入到所有转发请求，这样远程浏览器不用登录 Science。
-（拿 nonce 要跨界进 WSL；后续登录请求仍走 Windows host 的 127.0.0.1:899x，靠
- WSL2 的 localhost-forwarding 默认转发。）
+监听两个 LAN 端口，反代到 Science：
+    0.0.0.0:{CS_LAN_PORT}(默认1450)  ->  127.0.0.1:{CS_APP_PORT}(默认8000, Science app)
+    0.0.0.0:{CS_LAN_CONTENT_PORT}(默认1451) -> 127.0.0.1:{CS_CONTENT_PORT}(默认8001, sandbox content)
+
+自动代登录：启动/上游 401 时，直接跑本机 `claude-science url` 拿 nonce，
+GET /?nonce + POST /api/auth/nonce 取得会话 cookie，注入到所有转发请求，
+这样远程浏览器不用登录 Science。
 
 自鉴权：访问需带 ?token= 查询参数 或 Authorization: Bearer 或 cs_lan cookie（== CS_GUARD_TOKEN）。
 首次用 ?token= 访问会下发 cs_lan cookie，浏览器记住，之后链接里不带 token 也行。
 
-依赖：除标准库外只用 cryptography（生成自签证书，Windows 上无 openssl）。
-所有参数走环境变量（secret 不进 argv）。
+纯标准库，无第三方依赖。所有参数走环境变量（secret 不进 argv）。
 """
 import os
 import sys
 import time
-import shlex
 import socket
 import ssl
 import threading
@@ -34,8 +31,6 @@ import http.cookiejar
 import http.server
 import socketserver
 import secrets
-import datetime
-import ipaddress
 
 # ---- 配置（环境变量）----
 SANDBOX_HOME = os.environ.get("CS_SANDBOX_HOME", "")
@@ -45,11 +40,8 @@ LAN_PORT = int(os.environ.get("CS_LAN_PORT", "1450"))
 LAN_CONTENT_PORT = int(os.environ.get("CS_LAN_CONTENT_PORT", "1451"))
 GUARD_TOKEN = os.environ.get("CS_GUARD_TOKEN", "")
 SCIENCE_BIN = os.environ.get("CS_SCIENCE_BIN", "claude-science")
-# WSL 发行版名（空 = wsl.exe 默认）。claude-science 跑在 WSL 里，代登录要跨界进去。
-WSL_DISTRO = os.environ.get("CS_WSL_DISTRO", "")
-# 自开日志文件：desktop 把 stdout/stderr 接到了空设备（见 gateway.rs 的 Stdio::null()），
-# 不写文件就没法自查重连/异常。
-LOG_PATH = os.environ.get("CS_LAN_LOG") or os.path.expanduser("~/.lan-bridge/logs/lan-gateway.log")
+# 自开日志文件：desktop 把 stdout/stderr 接到了 /dev/null，不写文件就没法自查重连/异常。
+LOG_PATH = os.environ.get("CS_LAN_LOG") or os.path.expanduser("~/.csswitch/logs/lan-gateway.log")
 
 CONNECT_TIMEOUT = 10
 # 转发请求时跳过的 hop-by-hop / 自管头
@@ -62,23 +54,14 @@ HOP_HEADERS = {
 }
 
 # ---- HTTPS：自签证书（Science 前端用 crypto.randomUUID/subtle，需安全上下文）----
-CERT_PATH = os.environ.get("CS_CERT") or os.path.expanduser("~/.lan-bridge/lan-gateway-cert.pem")
-KEY_PATH = os.environ.get("CS_KEY") or os.path.expanduser("~/.lan-bridge/lan-gateway-key.pem")
+CERT_PATH = os.environ.get("CS_CERT") or os.path.expanduser("~/.csswitch/lan-gateway-cert.pem")
+KEY_PATH = os.environ.get("CS_KEY") or os.path.expanduser("~/.csswitch/lan-gateway-key.pem")
 
 
 def all_lan_ips():
-    """收集本机非 loopback 的 IPv4（写进证书 SAN，减少名称不匹配提示）。
-    不用 `hostname -I`（Linux 专属）；改用 getaddrinfo + UDP connect trick。"""
+    """收集本机非 loopback 的 IPv4（写进证书 SAN，减少名称不匹配提示）。"""
     ips = []
-    try:
-        hn = socket.gethostname()
-        for info in socket.getaddrinfo(hn, None, socket.AF_INET):
-            ip = info[4][0]
-            if not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
-    # UDP connect trick：不发包，拿默认出口网卡 IP（与 Rust 侧 lan_ip 一致）
+    # UDP connect trick（跨平台，Windows 可用）：不发包，拿默认出口网卡 IP
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -90,50 +73,51 @@ def all_lan_ips():
             s.close()
     except Exception:
         pass
+    try:
+        hn = socket.gethostname()
+        for info in socket.getaddrinfo(hn, None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
     return ips or ["127.0.0.1"]
 
 
 def ensure_cert():
-    """没有就生成自签证书（含本机 IP 的 SAN）。已存在则复用。
-    Windows 上没有 openssl，用 cryptography 库生成（纯 Python wheel，无外部依赖）。"""
+    """没有就生成自签证书（含本机 IP 的 SAN）。已存在则复用。"""
     if os.path.exists(CERT_PATH) and os.path.exists(KEY_PATH):
         return
+    ips = all_lan_ips()
+    san = ",".join(["DNS:csswitch", "DNS:localhost"] + [f"IP:{ip}" for ip in ips])
+    os.makedirs(os.path.dirname(CERT_PATH), exist_ok=True)
+    # Windows 无 openssl：用 cryptography 库生成（与原 Windows 版 lan-gateway-win.py 相同方案）
     from cryptography import x509
     from cryptography.x509.oid import NameOID
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
-
-    ips = all_lan_ips()
-    os.makedirs(os.path.dirname(CERT_PATH) or ".", exist_ok=True)
+    import datetime
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "lan-bridge")])
-    san = [x509.DNSName("localhost"), x509.DNSName("csswitch")]
-    for ip in ips:
-        try:
-            san.append(x509.IPAddress(ipaddress.ip_address(ip)))
-        except ValueError:
-            pass  # 非法 IP 串，跳过
-    now = datetime.datetime.now(datetime.timezone.utc)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(x509.random_serial_number())
-        .not_valid_before(now)
-        .not_valid_after(now + datetime.timedelta(days=3650))
-        .add_extension(x509.SubjectAlternativeName(san), critical=False)
-        .sign(key, hashes.SHA256())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "csswitch")])
+    san_ext = x509.SubjectAlternativeName(
+        [x509.DNSName("csswitch"), x509.DNSName("localhost")]
+        + [x509.IPAddress(ipaddress.ip_address(ip)) for ip in ips]
     )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=3650))
+            .add_extension(san_ext, critical=False)
+            .sign(key, hashes.SHA256()))
     with open(KEY_PATH, "wb") as f:
         f.write(key.private_bytes(
             serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        ))
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption()))
     with open(CERT_PATH, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
-    log(f"已生成自签证书：{CERT_PATH}（SAN: {','.join(ips)}）")
 
 
 def make_ssl_context():
@@ -152,11 +136,11 @@ def log(msg: str) -> None:
 
 
 def _redirect_stdio_to_log() -> None:
-    """desktop 启动本进程时把 stdout/stderr 都接到空设备（见 gateway.rs 的
+    """desktop 启动本进程时把 stdout/stderr 都接到 /dev/null（见 lan_gateway.rs 的
     Stdio::null()），重连/异常/代登录日志全丢。这里重定向到 LOG_PATH，方便自查。
     失败则静默退回原 stdio（不影响转发功能）。"""
     try:
-        os.makedirs(os.path.dirname(LOG_PATH) or ".", exist_ok=True)
+        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         f = open(LOG_PATH, "a", encoding="utf-8", buffering=1)  # 行缓冲，近实时
         sys.stdout = f
         sys.stderr = f
@@ -164,31 +148,13 @@ def _redirect_stdio_to_log() -> None:
         pass
 
 
-def _wsl_argv(linux_cmd: str):
-    """构造 wsl.exe 调用：在（指定发行版的）WSL 里跑 `bash -lc <linux_cmd>`。"""
-    argv = ["wsl.exe"]
-    if WSL_DISTRO:
-        argv += ["-d", WSL_DISTRO]
-    argv += ["bash", "-lc", linux_cmd]
-    return argv
-
-
 def acquire_session() -> http.cookiejar.CookieJar:
-    """跑一遍 nonce 流程，返回含 Science 会话 cookie 的 CookieJar。
-    第 1 步（拿 nonce 链接）跨界进 WSL 调 claude-science；后续登录请求仍在
-    Windows host 访问 127.0.0.1:899x（靠 WSL2 localhost-forwarding）。"""
-    if not SANDBOX_HOME:
-        raise RuntimeError("CS_SANDBOX_HOME 未设置，无法代登录")
-    if not WSL_DISTRO:
-        log("⚠️ CS_WSL_DISTRO 未设置，使用 wsl.exe 默认发行版")
-    # 1. claude-science url 拿 nonce 链接（在 WSL 里，HOME 设为沙箱 home）
-    linux_cmd = f"HOME={shlex.quote(SANDBOX_HOME)} {shlex.quote(SCIENCE_BIN)} url"
-    # Windows 中文系统默认用 GBK 解码，但 wsl.exe 透传的是 Linux 的 UTF-8 输出
-    # （claude-science url 的框线字符/中文），GBK 解不了会抛 UnicodeDecodeError 让代登录崩。
-    # 强制 UTF-8 + errors=replace，绝不在解码上挂掉。
+    """跑一遍 nonce 流程，返回含 Science 会话 cookie 的 CookieJar。"""
+    env = dict(os.environ)  # Windows 原生 CS：CLI 自用其数据目录，无需 HOME/SANDBOX_HOME
+    # 1. claude-science url 拿 nonce 链接
     proc = subprocess.run(
-        _wsl_argv(linux_cmd), capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=30,
+        [SCIENCE_BIN, "url"], capture_output=True,
+        env=env, timeout=15, encoding="utf-8", errors="replace",
     )
     nonce_url = None
     for line in (proc.stdout or "").splitlines():
@@ -203,11 +169,7 @@ def acquire_session() -> http.cookiejar.CookieJar:
     nonce = q.get("nonce", [None])[0]
     if not nonce:
         raise RuntimeError("nonce 链接里没有 nonce 参数")
-    # nonce_url 通常是 localhost:port（claude-science url 输出）。统一改成 127.0.0.1:APP_PORT，
-    # 保证 GET 拿 cookie 与 POST 用同一 host → cookie 同 domain → POST 能带上 operon_csrf；
-    # 否则 GET 在 localhost 拿的 cookie，POST 到 127.0.0.1 不带 → Science 判 CSRF 失败 → 401。
-    nonce_url = parsed._replace(netloc=f"127.0.0.1:{APP_PORT}").geturl()
-    # 2. GET /?nonce -> operon_csrf cookie（Windows host 经 WSL forwarding 访问 8000/8001）
+    # 2. GET /?nonce -> operon_csrf cookie
     jar = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     opener.open(nonce_url, timeout=CONNECT_TIMEOUT).read()
@@ -217,12 +179,7 @@ def acquire_session() -> http.cookiejar.CookieJar:
         f"http://127.0.0.1:{APP_PORT}/api/auth/nonce", data=data, method="POST",
     )
     req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    try:
-        opener.open(req, timeout=CONNECT_TIMEOUT).read()
-    except urllib.error.HTTPError as e:
-        body = e.read()[:300].decode("utf-8", "replace")
-        log(f"POST /api/auth/nonce 失败：HTTP {e.code}；已带 cookie={[c.name for c in jar]}；响应={body}")
-        raise
+    opener.open(req, timeout=CONNECT_TIMEOUT).read()
     return jar
 
 
@@ -282,18 +239,12 @@ def _pipe(src: socket.socket, dst: socket.socket) -> None:
 
 def _enable_keepalive(sock: socket.socket, idle: int = 30, intvl: int = 10, cnt: int = 3) -> None:
     """开 TCP keepalive：既不误杀空闲长连（与 recv 超时不同，keepalive 不影响数据收发），
-    又能在对端真死（断网/NAT 超时）时及时探出，而不是无限挂着。
-    跨平台：Linux 用 TCP_KEEPIDLE/INTVL/CNT；Windows 用 SIO_KEEPALIVE_VALS ioctl
-    （Windows 没有 TCP_KEEPIDLE 等常量，只有 SO_KEEPALIVE 的话默认 2 小时太长，WS 易掉）。"""
+    又能在对端真死（断网/NAT 超时）时及时探出，而不是无限挂着。"""
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        if hasattr(socket, "TCP_KEEPIDLE"):  # Linux/macOS
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, intvl)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, cnt)
-        if os.name == "nt" and hasattr(socket, "SIO_KEEPALIVE_VALS"):  # Windows
-            # (onoff, idle_ms, interval_ms)
-            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, idle * 1000, intvl * 1000))
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, idle)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, intvl)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, cnt)
     except (OSError, AttributeError):
         pass
 
@@ -302,7 +253,7 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
     # 由各自 server 实例注入：上游端口 + 是否改写 8990/8991
     # 通过 self.server.upstream_port 访问
     protocol_version = "HTTP/1.1"
-    server_version = "LANBridgeGateway/1.0"
+    server_version = "CSSwitchLANGateway/1.0"
 
     # ---- 鉴权 ----
     def _client_token(self):
@@ -410,6 +361,11 @@ class ProxyHandler(http.server.BaseHTTPRequestHandler):
             elif kl == "content-encoding" and v.strip():
                 encoded = True
         host = self.headers.get("Host", "").split(":")[0] or "localhost"
+        # 只对确凿的文本型 MIME 做端口改写(重写 body 需先按 utf-8 解码,decode("utf-8","replace")
+        # 会把二进制字节塌成 U+FFFD)。宽松的 "xml" 子串会误命中 docx 的 MIME
+        # application/vnd.openxmlformats-officedocument.wordprocessingml.document
+        # (其 "openxmlformats" 含 "xml"),把合法 docx 压缩流污染成损坏文件。
+        # 故这里只认可明确文本: text/*、javascript、application/json(不移除,是文本)。
         if not encoded and (ctype.startswith("text/") or "javascript" in ctype or ctype == "application/json"):
             try:
                 body = self._rewrite_body(body, host)
@@ -607,10 +563,9 @@ class SSLThreadingHTTPServer(ThreadingHTTPServer):
 
 def main():
     _redirect_stdio_to_log()
-    log(f"===== lan-gateway (Windows) 启动（pid={os.getpid()}，日志：{LOG_PATH}）=====")
+    log(f"===== lan-gateway 启动（pid={os.getpid()}，日志：{LOG_PATH}）=====")
     for name, val in [("LAN_PORT", LAN_PORT), ("LAN_CONTENT_PORT", LAN_CONTENT_PORT),
-                      ("APP_PORT", APP_PORT), ("CONTENT_PORT", CONTENT_PORT),
-                      ("WSL_DISTRO", WSL_DISTRO or "(default)")]:
+                      ("APP_PORT", APP_PORT), ("CONTENT_PORT", CONTENT_PORT)]:
         log(f"配置 {name}={val}")
     if not GUARD_TOKEN:
         log("⚠️ CS_GUARD_TOKEN 未设置，网关无鉴权（仅适合本机调试）")
@@ -618,13 +573,14 @@ def main():
     try:
         get_session()
     except Exception as e:
-        log(f"启动代登录失败（WSL/Science 可能还没起，稍后请求触发重试）：{e}")
+        log(f"启动代登录失败（沙箱可能还没起，稍后请求触发重试）：{e}")
     ensure_cert()
     ssl_ctx = make_ssl_context()
     srv_app = SSLThreadingHTTPServer(("0.0.0.0", LAN_PORT), ProxyHandler, ssl_ctx)
     srv_app.upstream_port = APP_PORT
     srv_content = SSLThreadingHTTPServer(("0.0.0.0", LAN_CONTENT_PORT), ProxyHandler, ssl_ctx)
     srv_content.upstream_port = CONTENT_PORT
+    log(f"HTTPS 自签证书：{CERT_PATH}（SAN: {','.join(all_lan_ips())}）")
     threading.Thread(target=srv_content.serve_forever, daemon=True).start()
     log(f"内容端口 {LAN_CONTENT_PORT}(https) -> {CONTENT_PORT} 已监听")
     log(f"应用端口 {LAN_PORT}(https) -> {APP_PORT} 已监听，开始服务（首次打开需信任自签证书）")
