@@ -65,7 +65,17 @@ pub fn log_path() -> PathBuf {
 impl Config {
     pub fn load() -> Self {
         match fs::read_to_string(config_path()) {
-            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            // PowerShell Set-Content 会写 UTF-8 BOM；serde_json 不认 BOM 会静默退默认配置
+            Ok(s) => {
+                let s = s.trim_start_matches('\u{feff}');
+                match serde_json::from_str::<Config>(s) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("[lan-bridge] config.json 解析失败（用默认配置）：{e}");
+                        Config::default()
+                    }
+                }
+            }
             Err(_) => Config::default(),
         }
     }
