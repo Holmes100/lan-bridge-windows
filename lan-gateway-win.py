@@ -35,8 +35,8 @@ import secrets
 
 # ---- 配置（环境变量）----
 SANDBOX_HOME = os.environ.get("CS_SANDBOX_HOME", "")
-APP_PORT = int(os.environ.get("CS_APP_PORT", "8990"))
-CONTENT_PORT = int(os.environ.get("CS_CONTENT_PORT", "8991"))
+APP_PORT = int(os.environ.get("CS_APP_PORT", "8000"))
+CONTENT_PORT = int(os.environ.get("CS_CONTENT_PORT", "8001"))
 LAN_PORT = int(os.environ.get("CS_LAN_PORT", "1450"))
 LAN_CONTENT_PORT = int(os.environ.get("CS_LAN_CONTENT_PORT", "1451"))
 GUARD_TOKEN = os.environ.get("CS_GUARD_TOKEN", "")
@@ -170,6 +170,8 @@ def acquire_session() -> http.cookiejar.CookieJar:
         "PATH": os.environ.get("PATH", r"C:\Windows\system32;C:\Windows"),
     }
     cli_env = {k: v for k, v in cli_env.items() if v}
+    # Windows CreateProcess 要求环境块按变量名排序，乱序会报 WinError 87 参数错误
+    cli_env = dict(sorted(cli_env.items()))
     # 1. claude-science url 拿 nonce 链接
     proc = subprocess.run(
         [SCIENCE_BIN, "url"], capture_output=True,
@@ -592,7 +594,8 @@ def main():
     try:
         get_session()
     except Exception as e:
-        log(f"启动代登录失败（沙箱可能还没起，稍后请求触发重试）：{e}")
+        import traceback
+        log(f"启动代登录失败（沙箱可能还没起，稍后请求触发重试）：{e}\n{traceback.format_exc()}")
     ensure_cert()
     ssl_ctx = make_ssl_context()
     srv_app = SSLThreadingHTTPServer(("0.0.0.0", LAN_PORT), ProxyHandler, ssl_ctx)
