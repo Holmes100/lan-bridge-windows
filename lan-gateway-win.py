@@ -19,6 +19,7 @@ GET /?nonce + POST /api/auth/nonce 取得会话 cookie，注入到所有转发�
 """
 import os
 import sys
+import shutil
 import time
 import socket
 import ipaddress
@@ -175,20 +176,36 @@ def acquire_session() -> http.cookiejar.CookieJar:
     wh_env = dict(sorted(wh_env.items()))
 
     argv = [SCIENCE_BIN, "url"]
+    # cmd-wrap 需要：白名单 PATH 里没有 science_bin 所在目录，cmd 找不到裸名
+    sci = SCIENCE_BIN
+    if not (os.path.isabs(sci) and os.path.exists(sci)):
+        cand = shutil.which(sci) or shutil.which(sci + ".exe")
+        if cand:
+            sci = cand
+        elif os.path.exists(SCIENCE_BIN):
+            sci = os.path.abspath(SCIENCE_BIN)
+    argv_cmd = [sci, "url"]
     attempts = [
         ("whitelist-env", dict(argv=argv, env=wh_env)),
-        ("cmd-wrap", dict(argv=[os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"), "/c"] + argv, env=wh_env)),
+        ("cmd-wrap", dict(argv=[os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"), "/c"] + argv_cmd, env=wh_env)),
         ("inherit-env", dict(argv=argv)),
     ]
     proc = None
     last_err = None
     for name, kw in attempts:
         try:
-            proc = subprocess.run(
-                kw["argv"], capture_output=True, env=kw.get("env"),
-                timeout=15, encoding="utf-8", errors="replace",
-            )
-            log(f"代登录 CLI 调用成功（方式={name}）")
+            # 字节捕获：GUI 下 cmd/PowerShell 输出可能是 GBK，按 UTF-8 硬解会丢 nonce
+            p = subprocess.run(kw["argv"], capture_output=True, env=kw.get("env"), timeout=15)
+            def _dec(b):
+                for enc in ("utf-8", "gbk"):
+                    try:
+                        return b.decode(enc)
+                    except UnicodeDecodeError:
+                        continue
+                return b.decode("utf-8", "replace")
+            import types
+            proc = types.SimpleNamespace(stdout=_dec(p.stdout), stderr=_dec(p.stderr), returncode=p.returncode)
+            log(f"代登录 CLI 调用成功（方式={name}，rc={p.returncode}）")
             break
         except Exception as e:
             last_err = e
