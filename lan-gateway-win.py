@@ -42,6 +42,11 @@ LAN_PORT = int(os.environ.get("CS_LAN_PORT", "1450"))
 LAN_CONTENT_PORT = int(os.environ.get("CS_LAN_CONTENT_PORT", "1451"))
 GUARD_TOKEN = os.environ.get("CS_GUARD_TOKEN", "")
 SCIENCE_BIN = os.environ.get("CS_SCIENCE_BIN", "claude-science")
+# CLI 取 nonce 必须与转发目标 daemon 同一数据目录，否则 nonce 进错（无会话）daemon
+SANDBOX_DATA_DIR = os.environ.get(
+    "CS_SANDBOX_DATA_DIR",
+    os.path.join(os.path.expanduser("~"), ".csswitch", "sandbox", "home", ".claude-science"),
+)
 # 自开日志文件：desktop 把 stdout/stderr 接到了 /dev/null，不写文件就没法自查重连/异常。
 LOG_PATH = os.environ.get("CS_LAN_LOG") or os.path.expanduser("~/.csswitch/logs/lan-gateway.log")
 
@@ -176,6 +181,9 @@ def acquire_session() -> http.cookiejar.CookieJar:
     wh_env = dict(sorted(wh_env.items()))
 
     argv = [SCIENCE_BIN, "url"]
+    # CLI 必须用与目标 daemon 相同的 --data-dir，否则 nonce 指向另一个（无会话）daemon
+    if os.path.isdir(SANDBOX_DATA_DIR):
+        argv += ["--data-dir", SANDBOX_DATA_DIR]
     # cmd-wrap 需要：白名单 PATH 里没有 science_bin 所在目录，cmd 找不到裸名
     sci = SCIENCE_BIN
     if not (os.path.isabs(sci) and os.path.exists(sci)):
@@ -184,7 +192,7 @@ def acquire_session() -> http.cookiejar.CookieJar:
             sci = cand
         elif os.path.exists(SCIENCE_BIN):
             sci = os.path.abspath(SCIENCE_BIN)
-    argv_cmd = [sci, "url"]
+    argv_cmd = [sci] + argv[1:]
     attempts = [
         ("whitelist-env", dict(argv=argv, env=wh_env)),
         ("cmd-wrap", dict(argv=[os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"), "/c"] + argv_cmd, env=wh_env)),
