@@ -152,9 +152,11 @@ def _redirect_stdio_to_log() -> None:
 def acquire_session() -> http.cookiejar.CookieJar:
     """跑一遍 nonce 流程，返回含 Science 会话 cookie 的 CookieJar。"""
     # Windows 原生 CS：CLI 自用其数据目录，无需 HOME/SANDBOX_HOME。
-    # GUI(Tauri) 父进程的环境块在 CreateProcess 时报 WinError 87「参数错误」，
-    # 无论继承还是重建都会中招 → 用白名单最小环境块兜底。
-    cli_env = {
+    # GUI(Tauri) 父进程直拉时 CreateProcess 报 WinError 87「参数错误」，
+    # 继承 env / 白名单 env 均中招（白名单从干净父进程验证正常）。
+    # 对策：三级降级 ① 白名单 env → ② 经 cmd.exe /c 包装 → ③ 完整继承，
+    # 每级失败都记录详细诊断。
+    wh_env = {
         "SYSTEMROOT": os.environ.get("SYSTEMROOT", r"C:\Windows"),
         "SYSTEMDRIVE": os.environ.get("SYSTEMDRIVE", "C:"),
         "COMSPEC": os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"),
@@ -163,20 +165,37 @@ def acquire_session() -> http.cookiejar.CookieJar:
         "TMP": os.environ.get("TMP", r"C:\Windows\Temp"),
         "USERPROFILE": os.environ.get("USERPROFILE", os.path.expanduser("~")),
         "HOMEDRIVE": os.environ.get("HOMEDRIVE", "C:"),
-        "HOMEPATH": os.environ.get("HOMEPATH", r"\Users\shanbin"),
+        "HOMEPATH": os.environ.get("HOMEPATH", os.path.basename(os.path.expanduser("~"))),
         "APPDATA": os.environ.get("APPDATA", ""),
         "LOCALAPPDATA": os.environ.get("LOCALAPPDATA", ""),
         "PROGRAMDATA": os.environ.get("PROGRAMDATA", ""),
         "PATH": os.environ.get("PATH", r"C:\Windows\system32;C:\Windows"),
     }
-    cli_env = {k: v for k, v in cli_env.items() if v}
-    # Windows CreateProcess 要求环境块按变量名排序，乱序会报 WinError 87 参数错误
-    cli_env = dict(sorted(cli_env.items()))
-    # 1. claude-science url 拿 nonce 链接
-    proc = subprocess.run(
-        [SCIENCE_BIN, "url"], capture_output=True,
-        env=cli_env, timeout=15, encoding="utf-8", errors="replace",
-    )
+    wh_env = {k: v for k, v in wh_env.items() if v}
+    wh_env = dict(sorted(wh_env.items()))
+
+    argv = [SCIENCE_BIN, "url"]
+    attempts = [
+        ("whitelist-env", dict(argv=argv, env=wh_env)),
+        ("cmd-wrap", dict(argv=[os.environ.get("COMSPEC", r"C:\Windows\system32\cmd.exe"), "/c"] + argv, env=wh_env)),
+        ("inherit-env", dict(argv=argv)),
+    ]
+    proc = None
+    last_err = None
+    for name, kw in attempts:
+        try:
+            proc = subprocess.run(
+                kw["argv"], capture_output=True, env=kw.get("env"),
+                timeout=15, encoding="utf-8", errors="replace",
+            )
+            log(f"代登录 CLI 调用成功（方式={name}）")
+            break
+        except Exception as e:
+            last_err = e
+            import traceback
+            log(f"代登录 CLI 方式[{name}]失败：{e!r}\n{traceback.format_exc()}")
+    if proc is None:
+        raise RuntimeError(f"代登录 CLI 三种方式全部失败：{last_err!r}")
     nonce_url = None
     for line in (proc.stdout or "").splitlines():
         line = line.strip()
